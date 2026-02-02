@@ -1,59 +1,65 @@
 import requests
 from bs4 import BeautifulSoup
 import os
+from pypdf import PdfReader
+import google.generativeai as genai
+import io
 
-# 1. Configuration
+# Setup
 URL = "https://www.gazette.vic.gov.au/gazette_bin/gazette_archives.cfm?bct=home|recentgazettes|gazettearchives"
 BASE_URL = "https://www.gazette.vic.gov.au"
 LOG_FILE = "last_gazette.txt"
 
-def check_for_updates():
-    response = requests.get(URL)
-    soup = BeautifulSoup(response.text, 'html.parser')
+# Configure Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-2.0-flash')
+
+def get_summary(pdf_content):
+    # Extract text from the first 5 pages to keep it fast/cheap
+    reader = PdfReader(io.BytesIO(pdf_content))
+    text = ""
+    for i in range(min(5, len(reader.pages))):
+        text += reader.pages[i].extract_text()
     
-    # Find the first PDF link in the archive list
-    latest_link_tag = soup.find('a', href=lambda x: x and x.endswith('.pdf'))
-    if not latest_link_tag:
-        print("Could not find any gazette links.")
-        return
+    prompt = f"Summarize the following Victorian Government Gazette content into a few bullet points. Focus on major notices, planning changes, or government appointments: \n\n{text[:10000]}"
+    response = model.generate_content(prompt)
+    return response.text
 
-    latest_url = BASE_URL + latest_link_tag['href']
-    gazette_name = latest_link_tag.text.strip()
-
-    # 2. Check if this is new
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r') as f:
-            last_url = f.read().strip()
-    else:
-        last_url = ""
-
-    if latest_url != last_url:
-        print(f"NEW GAZETTE FOUND: {gazette_name}")
-        # Update our record
-        with open(LOG_FILE, 'w') as f:
-            f.write(latest_url)
-        
-        # 3. Send notification (We'll use a simple print here; see Step 4 for real alerts)
-        send_notification(gazette_name, latest_url)
-    else:
-        print("No new gazettes today.")
-
-import os
-
-def send_notification(name, link):
-    # Retrieve secrets from the environment
+def send_notification(name, link, summary):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
-    if not token or not chat_id:
-        print("Missing credentials. Skipping notification.")
-        return
-
-    msg = f"🗞 New Gazette Published!\n{name}\nLink: {link}"
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    params = {"chat_id": chat_id, "text": msg}
+    msg = f"🗞 *New Gazette Published!*\n{name}\n\n*AI Summary:*\n{summary}\n\n[Full PDF Link]({link})"
     
-    requests.get(url, params=params)
+    # Use parse_mode='Markdown' to make it look nice
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+
+def check_for_updates():
+    response = requests.get(URL)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    latest_link_tag = soup.find('a', href=lambda x: x and x.endswith('.pdf'))
+    
+    if not latest_link_tag: return
+    
+    latest_url = BASE_URL + latest_link_tag['href']
+    
+    # Check memory
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, 'r') as f:
+            if f.read().strip() == latest_url:
+                print("No new updates.")
+                return
+
+    # New one found!
+    print(f"Processing new Gazette: {latest_url}")
+    pdf_response = requests.get(latest_url)
+    summary = get_summary(pdf_response.content)
+    
+    send_notification(latest_link_tag.text.strip(), latest_url, summary)
+    
+    with open(LOG_FILE, 'w') as f:
+        f.write(latest_url)
 
 if __name__ == "__main__":
     check_for_updates()
