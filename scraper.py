@@ -22,9 +22,9 @@ def get_summary(pdf_content):
     
     prompt = "Summarize this Victorian Government Gazette into bullet points. Focus on major notices or planning changes."
     
-    # Using the new SDK syntax and switching to 1.5-flash for better quota
+    # Updated Model Name: gemini-2.0-flash
     response = client.models.generate_content(
-        model='gemini-1.5-flash', 
+        model='gemini-2.0-flash', 
         contents=f"{prompt}\n\n{text[:10000]}"
     )
     return response.text
