@@ -38,11 +38,22 @@ def check_for_updates():
     else:
         print("No new gazettes today.")
 
+import os
+
 def send_notification(name, link):
-    token = "7697048233:AAEE-m1V1cXDeJhipbFaYimX_K-qxJWKCVs"
-    chat_id = "t.me/Gazzy26bot."
+    # Retrieve secrets from the environment
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        print("Missing credentials. Skipping notification.")
+        return
+
     msg = f"🗞 New Gazette Published!\n{name}\nLink: {link}"
-    requests.get(f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={msg}")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    params = {"chat_id": chat_id, "text": msg}
+    
+    requests.get(url, params=params)
 
 if __name__ == "__main__":
     check_for_updates()
