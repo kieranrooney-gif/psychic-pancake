@@ -1,0 +1,32 @@
+name: Gazette Daily Check
+
+on:
+  schedule:
+    - cron: '0 23 * * *' # Runs at 9:00 AM Melbourne time (23:00 UTC)
+  workflow_dispatch: # Allows you to run it manually for testing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Scraper
+        run: python scraper.py
+
+      - name: Commit changes # This saves the 'last_gazette.txt' so it remembers for tomorrow
+        run: |
+          git config --global user.name 'Gazette Bot'
+          git config --global user.email 'bot@noreply.github.com'
+          git add last_gazette.txt
+          git commit -m "Update last seen gazette" || exit 0
+          git push
