@@ -1,37 +1,38 @@
-import requests
-from bs4 import BeautifulSoup
 import os
-from pypdf import PdfReader
-import google.generativeai as genai
+import requests
 import io
+from bs4 import BeautifulSoup
+from pypdf import PdfReader
+from google import genai # This is the new 2nd Gen library
 
-# Setup
+# Configuration
 URL = "https://www.gazette.vic.gov.au/gazette_bin/gazette_archives.cfm?bct=home|recentgazettes|gazettearchives"
 BASE_URL = "https://www.gazette.vic.gov.au"
 LOG_FILE = "last_gazette.txt"
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.0-flash')
+# Initialize the New Gemini Client
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_summary(pdf_content):
-    # Extract text from the first 5 pages to keep it fast/cheap
+    # Extract text from the first 5 pages
     reader = PdfReader(io.BytesIO(pdf_content))
     text = ""
     for i in range(min(5, len(reader.pages))):
         text += reader.pages[i].extract_text()
     
-    prompt = f"Summarize the following Victorian Government Gazette content into a few bullet points. Focus on major notices, planning changes, or government appointments: \n\n{text[:10000]}"
-    response = model.generate_content(prompt)
+    prompt = "Summarize this Victorian Government Gazette into bullet points. Focus on major notices or planning changes."
+    
+    # Using the new SDK syntax and switching to 1.5-flash for better quota
+    response = client.models.generate_content(
+        model='gemini-1.5-flash', 
+        contents=f"{prompt}\n\n{text[:10000]}"
+    )
     return response.text
 
 def send_notification(name, link, summary):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    
     msg = f"🗞 *New Gazette Published!*\n{name}\n\n*AI Summary:*\n{summary}\n\n[Full PDF Link]({link})"
-    
-    # Use parse_mode='Markdown' to make it look nice
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, data={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
 
@@ -44,15 +45,14 @@ def check_for_updates():
     
     latest_url = BASE_URL + latest_link_tag['href']
     
-    # Check memory
+    # Memory check
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
             if f.read().strip() == latest_url:
                 print("No new updates.")
                 return
 
-    # New one found!
-    print(f"Processing new Gazette: {latest_url}")
+    print(f"New Gazette found! Summarizing...")
     pdf_response = requests.get(latest_url)
     summary = get_summary(pdf_response.content)
     
