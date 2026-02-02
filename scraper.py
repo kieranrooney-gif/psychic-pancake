@@ -39,8 +39,10 @@ def check_for_updates():
         print("No new gazettes today.")
 
 def send_notification(name, link):
-    # This message will appear in your GitHub Action logs
-    print(f"NOTIFICATION: {name} is available at {link}")
+    token = "7697048233:AAEE-m1V1cXDeJhipbFaYimX_K-qxJWKCVs"
+    chat_id = "t.me/Gazzy26bot."
+    msg = f"🗞 New Gazette Published!\n{name}\nLink: {link}"
+    requests.get(f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={msg}")
 
 if __name__ == "__main__":
     check_for_updates()
