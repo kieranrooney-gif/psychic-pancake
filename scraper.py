@@ -3,31 +3,32 @@ import requests
 import io
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
-from google import genai # This is the new 2nd Gen library
+from google import genai
 
 # Configuration
 URL = "https://www.gazette.vic.gov.au/gazette_bin/gazette_archives.cfm?bct=home|recentgazettes|gazettearchives"
 BASE_URL = "https://www.gazette.vic.gov.au"
 LOG_FILE = "last_gazette.txt"
 
-# Initialize the New Gemini Client
+# Initialize the Gemini Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_summary(pdf_content):
-    # Extract text from the first 5 pages
-    reader = PdfReader(io.BytesIO(pdf_content))
-    text = ""
-    for i in range(min(5, len(reader.pages))):
-        text += reader.pages[i].extract_text()
-    
-    prompt = "Summarize this Victorian Government Gazette into bullet points. Focus on major notices or planning changes."
-    
-    # Updated Model Name: gemini-2.0-flash
-    response = client.models.generate_content(
-        model='gemini-2.0-flash', 
-        contents=f"{prompt}\n\n{text[:10000]}"
-    )
-    return response.text
+    try:
+        reader = PdfReader(io.BytesIO(pdf_content))
+        # Just extract the first 3 pages to be safe with quota tokens
+        text = ""
+        for i in range(min(3, len(reader.pages))):
+            text += reader.pages[i].extract_text()
+        
+        # Use 'gemini-2.0-flash-lite' - the most stable free tier model in 2026
+        response = client.models.generate_content(
+            model='gemini-2.0-flash-lite', 
+            contents=f"Summarize this Victorian Gazette in 5 bullet points: \n\n{text[:5000]}"
+        )
+        return response.text
+    except Exception as e:
+        return f"AI Summary unavailable (Error: {str(e)})"
 
 def send_notification(name, link, summary):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -45,14 +46,13 @@ def check_for_updates():
     
     latest_url = BASE_URL + latest_link_tag['href']
     
-    # Memory check
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
             if f.read().strip() == latest_url:
                 print("No new updates.")
                 return
 
-    print(f"New Gazette found! Summarizing...")
+    print(f"New Gazette found! Processing with Flash-Lite...")
     pdf_response = requests.get(latest_url)
     summary = get_summary(pdf_response.content)
     
