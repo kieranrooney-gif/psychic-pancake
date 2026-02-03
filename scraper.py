@@ -19,19 +19,24 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 @retry(
     stop=stop_after_attempt(3), 
     wait=wait_exponential(multiplier=2, min=5, max=30),
-    retry=retry_if_exception_type(errors.ClientError)
+    retry_if_exception=retry_if_exception_type(errors.ClientError)
 )
-def get_ai_summary(pdf_content):
-    reader = PdfReader(io.BytesIO(pdf_content))
-    # For Special Gazettes, 2 pages is plenty
-    text = ""
-    for i in range(min(2, len(reader.pages))):
-        page_text = reader.pages[i].extract_text()
-        if page_text: text += page_text
-    
+def get_batch_summary(gazette_data_list):
+    """
+    Takes a list of dicts [{'name': '...', 'content': '...'}] 
+    and returns a single batch summary.
+    """
+    if not gazette_data_list:
+        return {}
+
+    # Combine all texts with clear separators
+    combined_input = "Please provide a brief 2-3 bullet point summary for EACH of the following Victorian Special Gazettes:\n\n"
+    for item in gazette_data_list:
+        combined_input += f"--- DOCUMENT: {item['name']} ---\n{item['text_content']}\n\n"
+
     response = client.models.generate_content(
         model='gemini-2.0-flash-lite', 
-        contents=f"Summarize this URGENT Special Gazette in 3 bullet points: \n\n{text[:5000]}"
+        contents=combined_input[:12000] # Safe limit for free tier tokens
     )
     return response.text
 
@@ -39,14 +44,10 @@ def send_notification(name, link, summary=None):
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     
-    if "Special" in name:
-        emoji = "🚨 *URGENT SPECIAL GAZETTE*"
-        body = f"Summary:\n{summary}" if summary else "Summary unavailable."
-    else:
-        emoji = "📅 *WEEKLY GENERAL GAZETTE*"
-        body = "Note: Standard weekly update. No AI summary generated to save quota."
-
-    msg = f"{emoji}\n{name}\n\n{body}\n\n🔗 [Open PDF]({link})"
+    emoji = "🚨 *URGENT SPECIAL GAZETTE*" if "Special" in name else "📅 *WEEKLY GENERAL GAZETTE*"
+    summary_text = f"\n*Summary:*\n{summary}" if summary else ""
+    
+    msg = f"{emoji}\n{name}\n{summary_text}\n\n🔗 [Open PDF]({link})"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(url, data={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
 
@@ -55,45 +56,57 @@ def check_for_updates():
     soup = BeautifulSoup(response.text, 'html.parser')
     all_links = soup.find_all('a', href=lambda x: x and x.endswith('.pdf'))
     
+    seen_links = []
     if os.path.exists(LOG_FILE):
         with open(LOG_FILE, 'r') as f:
             seen_links = f.read().splitlines()
-    else:
-        seen_links = []
 
-    new_found = False
-    today = datetime.now()
-    seven_days_ago = today - timedelta(days=7)
+    new_gazettes = []
+    seven_days_ago = datetime.now() - timedelta(days=7)
 
+    # 1. Collect all new gazettes first
     for link_tag in reversed(all_links):
         full_url = BASE_URL + link_tag['href']
-        link_text = link_tag.text.strip()
+        name = link_tag.text.strip()
         
         try:
-            date_str = link_text.split("Dated ")[1]
+            date_str = name.split("Dated ")[1]
             gazette_date = datetime.strptime(date_str, "%d %B %Y")
         except: continue
 
         if gazette_date >= seven_days_ago and full_url not in seen_links:
-            print(f"Processing: {link_text}")
-            
-            summary = None
-            # Only use AI for Special Gazettes to preserve quota
-            if "Special" in link_text:
-                pdf_res = requests.get(full_url)
-                try:
-                    summary = get_ai_summary(pdf_res.content)
-                except:
-                    summary = "AI quota full. Please check PDF manually."
+            new_gazettes.append({'name': name, 'url': full_url})
 
-            send_notification(link_text, full_url, summary)
-            seen_links.append(full_url)
-            new_found = True
-            time.sleep(2)
+    if not new_gazettes:
+        print("No new updates.")
+        return
 
-    if new_found:
-        with open(LOG_FILE, 'w') as f:
-            f.write("\n".join(seen_links[-50:]))
+    # 2. Extract text for Specials (for batching)
+    batch_queue = []
+    for g in new_gazettes:
+        if "Special" in g['name']:
+            print(f"Reading Special: {g['name']}")
+            pdf_res = requests.get(g['url'])
+            reader = PdfReader(io.BytesIO(pdf_res.content))
+            # Just grab first page text for the batch
+            g['text_content'] = reader.pages[0].extract_text()[:2000]
+            batch_queue.append(g)
+
+    # 3. Get ONE summary for all Specials
+    full_batch_report = ""
+    if batch_queue:
+        print("Sending batch request to AI...")
+        full_batch_report = get_batch_summary(batch_queue)
+
+    # 4. Send individual Telegram alerts
+    for g in new_gazettes:
+        send_notification(g['name'], g['url'], full_batch_report if "Special" in g['name'] else None)
+        seen_links.append(g['url'])
+        time.sleep(1) # Gentle pace for Telegram
+
+    # 5. Save Memory
+    with open(LOG_FILE, 'w') as f:
+        f.write("\n".join(seen_links[-50:]))
 
 if __name__ == "__main__":
     check_for_updates()
