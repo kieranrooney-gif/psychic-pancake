@@ -14,22 +14,28 @@ LOG_FILE = "seen_links.txt"
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def get_summary(pdf_content):
-    try:
-        reader = PdfReader(io.BytesIO(pdf_content))
-        text = ""
-        # Read more pages for General Gazettes as they are longer
-        for i in range(min(4, len(reader.pages))):
-            page_text = reader.pages[i].extract_text()
-            if page_text: text += page_text
-        
-        response = client.models.generate_content(
-            model='gemini-2.0-flash-lite', 
-            contents=f"Summarize this Victorian Gazette into 3-5 bullet points. If there are multiple notices, list the most important ones: \n\n{text[:7000]}"
-        )
-        return response.text
-    except Exception as e:
-        return f"AI Summary unavailable (Error: {str(e)})"
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from google.genai import errors
+
+# This decorator tells the function to keep trying if it hits a quota limit
+@retry(
+    stop=stop_after_attempt(5), 
+    wait=wait_exponential(multiplier=1, min=4, max=60),
+    retry=retry_if_exception_type(errors.ClientError)
+)
+def get_summary_with_retry(pdf_content):
+    reader = PdfReader(io.BytesIO(pdf_content))
+    # Reduce page count to 2 to stay under token limits
+    text = ""
+    for i in range(min(2, len(reader.pages))):
+        page_text = reader.pages[i].extract_text()
+        if page_text: text += page_text
+    
+    response = client.models.generate_content(
+        model='gemini-2.0-flash-lite', 
+        contents=f"Summarize this Gazette in 3 bullets: \n\n{text[:4000]}"
+    )
+    return response.text
 
 def send_notification(name, link, summary):
     token = os.getenv("TELEGRAM_TOKEN")
