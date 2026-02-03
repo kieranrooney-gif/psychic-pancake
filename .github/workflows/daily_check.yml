@@ -2,14 +2,17 @@ name: Gazette Daily Check
 
 on:
   schedule:
-    - cron: '0 23 * * *'
-  workflow_dispatch:
+    # 8 AM - 11 AM AEDT (9 PM - 12 AM UTC) - Monday to Friday
+    - cron: '0 21,22,23 * * 0-4'
+    # 12 PM - 6 PM AEDT (1 AM - 7 AM UTC) - Monday to Friday
+    - cron: '0 1,2,3,4,5,6,7 * * 1-5'
+  workflow_dispatch: # Allows manual testing
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # This ensures the bot can save the 'last_gazette' file
+      contents: write # Allows the bot to save 'seen_links.txt'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,22 +20,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install requests beautifulsoup4 pypdf google-genai tenacity
 
       - name: Run Scraper
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }} # Add this line
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scraper.py
 
       - name: Commit changes
         run: |
           git config --global user.name 'Gazette Bot'
           git config --global user.email 'bot@noreply.github.com'
-          git add seen_links.txt  # Updated filename
+          git add seen_links.txt
           git commit -m "Update seen gazettes list" || exit 0
           git push
