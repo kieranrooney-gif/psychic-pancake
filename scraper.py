@@ -25,12 +25,13 @@ def get_batch_summary(gazette_data_list):
     if not gazette_data_list:
         return ""
 
-    combined_input = "Briefly summarize the key notices for EACH of these Victorian Special Gazettes in 2-3 bullets:\n\n"
+    combined_input = "Briefly summarize the key notices for EACH of these Victorian Special Gazettes in 2-3 bullet points:\n\n"
     for item in gazette_data_list:
         combined_input += f"--- GAZETTE: {item['name']} ---\n{item['text_content']}\n\n"
 
+    # Updated to supported Gemini 3.5 Flash-Lite model
     response = client.models.generate_content(
-        model='gemini-2.0-flash-lite', 
+        model='gemini-3.5-flash-lite', 
         contents=combined_input[:12000]
     )
     return response.text
@@ -102,7 +103,9 @@ def check_for_updates():
     if batch_queue:
         try:
             batch_summary = get_batch_summary(batch_queue)
-        except: batch_summary = "AI Summary hit quota limit."
+        except Exception as e: 
+            # Prints the actual error string instead of guessing
+            batch_summary = f"⚠️ AI Error: {str(e)[:100]}"
 
     # 4. Notify
     send_master_notification(new_gazettes, batch_summary)
